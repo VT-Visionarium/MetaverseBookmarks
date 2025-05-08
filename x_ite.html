@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Bookmarking – X_ITE Accuracy</title>
+
+  <!-- X_ITE runtime -->
+  <script defer src="https://cdn.jsdelivr.net/npm/x_ite@11.5.6/dist/x_ite.min.js"></script> <!--  [oai_citation:0‡create3000.github.io](https://create3000.github.io/x_ite/dom-integration/) -->
+
+  <style>
+    body { text-align:center; font-family:Arial,sans-serif; margin:0; padding:20px; background:#f4f4f4 }
+    x3d-canvas { width:900px; height:600px; border:2px solid #000; display:block; margin:0 auto 20px }
+    button { margin:5px; padding:10px 15px; font-size:14px; cursor:pointer; border:none; border-radius:5px;
+             background:#007bff; color:#fff; transition:background .3s }
+    button:hover { background:#0056b3 }
+    .controls { position:absolute; top:95%; left:50%; transform:translate(-50%,-50%);
+                text-align:center; max-width:400px; background:rgba(255,255,255,.8);
+                padding:15px; border-radius:10px; box-shadow:0 4px 8px rgba(0,0,0,.2); z-index:999 }
+    textarea { width:300px; height:100px; margin-top:10px; padding:5px;
+               border:1px solid #ccc; border-radius:5px; font-family:monospace; font-size:12px; resize:none }
+    #distanceContainer { margin-top:10px; font-weight:bold; color:#d9534f }
+    .modal { display:none; position:fixed; z-index:1000; left:0; top:0; width:100%; height:100%;
+             overflow:auto; background:rgba(0,0,0,.5) }
+    .modal-content { background:#fff; margin:10% auto; padding:20px; border-radius:10px;
+                     width:80%; max-width:600px; box-shadow:0 5px 15px rgba(0,0,0,.3); position:relative }
+    .modal-content textarea { width:100%; height:300px; font-family:monospace; font-size:13px; padding:10px }
+    .close-btn { position:absolute; top:10px; right:15px; color:#aaa; font-size:24px; font-weight:bold; cursor:pointer }
+    .close-btn:hover { color:#000 }
+    #thumbnailPreview,#applyModalThumbnail { display:block; max-width:300px; margin-top:10px; border:1px solid #ccc }
+    #applyModal .modal-content button { width:100px }
+  </style>
+</head>
+
+<body>
+  <h1 style="margin:20px 0;font-size:24px;color:#333">
+    X_ITE Bookmarking Example with Roanoke City Model
+  </h1>
+
+  <!-- X3D scene declaratively inside x3d-canvas -->
+  <x3d-canvas id="x3dCanvas">
+    <X3D profile="Interchange" version="4.0">
+      <Scene>
+        <WorldInfo title="Roanoke City Model"
+                   info="Built 2025, (c) Virginia Tech"
+                   ageRestriction="18"
+                   license="CC-BY-4.0"></WorldInfo>
+
+        <!-- skybox -->
+        <Background backUrl="nz.png" bottomUrl="ny.png" frontUrl="pz.png"
+                    leftUrl="nx.png" rightUrl="px.png" topUrl="py.png"></Background>
+
+        <!-- default viewpoint -->
+        <Viewpoint DEF="AnimatedViewpoint"
+                   position="947.60547 358.48150 114.24887"
+                   orientation="-0.12102 0.99012 0.07078 1.38605"
+                   description="Animated Street View"></Viewpoint>
+
+        <!-- external model -->
+        <Inline url="./3d_file/test.x3d"></Inline>
+
+        <!-- ground -->
+        <Transform translation="0 270 0">
+          <Shape>
+            <Appearance><Material diffuseColor="0.5 0.5 0.5"></Material></Appearance>
+            <IndexedFaceSet coordIndex="0 1 2 3 -1" solid="false">
+              <Coordinate point="-5000 0 -5000  5000 0 -5000  5000 0 5000  -5000 0 5000"></Coordinate>
+            </IndexedFaceSet>
+          </Shape>
+        </Transform>
+
+        <!-- animation plumbing -->
+        <TimeSensor DEF="SceneTimer" loop="false"></TimeSensor>
+        <PositionInterpolator DEF="ScenePositionInterp"></PositionInterpolator>
+        <OrientationInterpolator DEF="SceneOrientationInterp"></OrientationInterpolator>
+        <ROUTE fromNode="SceneTimer" fromField="fraction_changed" toNode="ScenePositionInterp" toField="set_fraction"></ROUTE>
+        <ROUTE fromNode="SceneTimer" fromField="fraction_changed" toNode="SceneOrientationInterp" toField="set_fraction"></ROUTE>
+        <ROUTE fromNode="ScenePositionInterp" fromField="value_changed" toNode="AnimatedViewpoint" toField="set_position"></ROUTE>
+        <ROUTE fromNode="SceneOrientationInterp" fromField="value_changed" toNode="AnimatedViewpoint" toField="set_orientation"></ROUTE>
+      </Scene>
+    </X3D>
+  </x3d-canvas>
+
+  <!-- UI controls (unchanged) -->
+  <div class="controls">
+    <button onclick="generateBookmark()">Generate Bookmark</button>
+    <button onclick="applyBookmark()">Apply Bookmark</button><br>
+    <textarea id="bookmarkData" placeholder="Bookmark JSON here…"></textarea>
+    <div id="distanceContainer">Distance Error: —</div>
+  </div>
+
+  <!-- modals (unchanged) -->
+  <div id="bookmarkModal" class="modal">…</div>
+  <div id="applyModal" class="modal">…</div>
+
+  <script type="module">
+    import X3D from "https://cdn.jsdelivr.net/npm/x_ite@11.5.6/dist/x_ite.min.mjs";
+    const Browser = X3D.getBrowser("#x3dCanvas");           // 
+
+    Browser.addBrowserCallback("init", X3D.X3DConstants.INITIALIZED_EVENT, init);
+
+    function init() {
+      // helper: grab underlying canvas screenshot
+      function getScreenshot() {
+        const cnv = Browser.element.querySelector("canvas");
+        return cnv.toDataURL();
+      }
+
+      // helper: compress via a temporary <img>
+      function compressDataURI(dataURI, maxW=300, q=.7) {
+        return new Promise(res => {
+          const img = new Image();
+          img.onload = () => {
+            const scale = maxW / img.width;
+            const canvas = document.createElement("canvas");
+            canvas.width = maxW;
+            canvas.height = img.height * scale;
+            canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+            res(canvas.toDataURL("image/jpeg", q));
+          };
+          img.src = dataURI;
+        });
+      }
+
+      // compute and display metric errors
+      function showDistance(expectedPos, expectedOrient) {
+        const vp = Browser.activeViewpoint;                  // 
+        const currPos = vp.position;                         // SFVec3f [x,y,z]
+        const dx = currPos[0] - expectedPos[0],
+              dy = currPos[1] - expectedPos[1],
+              dz = currPos[2] - expectedPos[2];
+        const d = Math.hypot(dx, dy, dz);
+
+        // orientation: SFVec4f [axisX, axisY, axisZ, angle]
+        const co = vp.orientation,     ca = co[3],
+              ea = expectedOrient[3];
+        let diff = Math.abs(ca - ea);
+        if (diff > Math.PI) diff = 2*Math.PI - diff;
+        const deg = diff * 180/Math.PI;
+
+        document.getElementById("distanceContainer").textContent =
+          `Distance Error: ${d.toFixed(3)} m, Orientation Error: ${deg.toFixed(2)}°`;
+      }
+
+      // generate JSON bookmark
+      async function generateBookmark() {
+        const vp = Browser.activeViewpoint,
+              nav = Browser.activeNavigationInfo;
+        const pos = vp.position,
+              orient = vp.orientation,
+              fov = parseFloat(vp.getAttribute("fieldOfView")),
+              zn  = parseFloat(vp.getAttribute("zNear")),
+              zf  = parseFloat(vp.getAttribute("zFar"));
+
+        const rawURI = getScreenshot(),
+              thumb  = await compressDataURI(rawURI, 300, .7);
+
+        const bookmark = {
+          camera: {
+            position: [pos[0], pos[1], pos[2]],
+            orientation: [orient[0], orient[1], orient[2], orient[3]],
+            fieldOfView: fov, zNear: zn, zFar: zf
+          },
+          navigation: {
+            type: nav.type[0], speed: nav.speed
+          },
+          metadata: {
+            annotation: "Generated viewpoint",
+            timestamp: new Date().toISOString(),
+            author: "User",
+            application: "X_ITE Bookmarking v1.0",
+            thumbnail: thumb,
+            licenses: document.querySelector("WorldInfo").getAttribute("license"),
+            ageRestriction: document.querySelector("WorldInfo").getAttribute("ageRestriction"),
+            scene: {
+              title: document.querySelector("WorldInfo").getAttribute("title"),
+              info: document.querySelector("WorldInfo").getAttribute("info")
+            }
+          }
+        };
+
+        const str = JSON.stringify(bookmark, null, 2);
+        document.getElementById("bookmarkData").value = str;
+        document.getElementById("bookmarkModalText").value = str;
+        document.getElementById("thumbnailPreview").src = thumb;
+        document.getElementById("bookmarkModal").style.display = "block";
+
+        navigator.clipboard.writeText(str)
+          .then(() => document.getElementById("copyStatus").textContent="✅ Bookmark copied!")
+          .catch(() => document.getElementById("copyStatus").textContent="⚠️ Copy failed.");
+      }
+
+      let _currentBookmark = null;
+      function applyBookmark() {
+        try {
+          _currentBookmark = JSON.parse(document.getElementById("bookmarkData").value);
+          if (_currentBookmark.metadata.thumbnail)
+            document.getElementById("applyModalThumbnail").src = _currentBookmark.metadata.thumbnail;
+          document.getElementById("applyModal").style.display = "block";
+        } catch (e) {
+          alert("Invalid bookmark data!");
+        }
+      }
+
+      function confirmApply() {
+        const bm = _currentBookmark;
+        if (!bm) return closeApplyModal();
+
+        // create a named Viewpoint to bind
+        const vpEl = document.createElement("Viewpoint");
+        vpEl.setAttribute("DEF","BookmarkVP");
+        vpEl.setAttribute("position", bm.camera.position.join(" "));
+        vpEl.setAttribute("orientation", bm.camera.orientation.join(" "));
+        vpEl.setAttribute("fieldOfView", bm.camera.fieldOfView);
+        vpEl.setAttribute("zNear", bm.camera.zNear);
+        vpEl.setAttribute("zFar", bm.camera.zFar);
+        document.querySelector("#x3dCanvas X3D > Scene").appendChild(vpEl);
+
+        // restore navigation
+        Browser.activeNavigationInfo.type[0] = bm.navigation.type;
+        Browser.activeNavigationInfo.speed    = bm.navigation.speed;
+
+        // bind it
+        Browser.changeViewpoint("BookmarkVP");
+
+        // immediately measure
+        showDistance(bm.camera.position, bm.camera.orientation);
+
+        closeApplyModal();
+        alert("✅ Bookmark applied!");
+      }
+
+      // expo
+      window.generateBookmark = generateBookmark;
+      window.applyBookmark    = applyBookmark;
+      window.confirmApply     = confirmApply;
+      window.closeModal       = () => document.getElementById("bookmarkModal").style.display="none";
+      window.closeApplyModal  = () => document.getElementById("applyModal").style.display="none";
+    }
+  </script>
+</body>
+</html>
