@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bookmarking – Euclidean Accuracy</title>
+
+  <!-- X3DOM runtime -->
+  <script src="https://www.x3dom.org/download/1.8.2/x3dom.js"></script>
+  <link rel="stylesheet" href="https://www.x3dom.org/download/1.8.2/x3dom.css" />
+
+  <style>
+    body{
+      text-align:center;font-family:Arial,Helvetica,sans-serif;margin:0;padding:20px;background:#f4f4f4
+    }
+    x3d{
+      width:900px;height:600px;border:2px solid #000;margin:0 auto 20px
+    }
+    button{
+      margin:5px;padding:10px 15px;font-size:14px;cursor:pointer;border:none;border-radius:5px;
+      background:#007bff;color:#fff;transition:background .3s
+    }
+    button:hover{background:#0056b3}
+    .controls{
+      position:absolute;top:95%;left:50%;transform:translate(-50%,-50%);
+      text-align:center;max-width:400px;background:rgba(255,255,255,.8);
+      padding:15px;border-radius:10px;box-shadow:0 4px 8px rgba(0,0,0,.2);z-index:999
+    }
+    textarea{
+      width:300px;height:100px;margin-top:10px;padding:5px;border:1px solid #ccc;border-radius:5px;
+      font-family:monospace;font-size:12px;resize:none
+    }
+    #distanceContainer{
+      margin-top:10px;font-weight:bold;color:#d9534f /*bootstrap danger red*/
+    }
+    /* modal styles … (unchanged) */
+    .modal{display:none;position:fixed;z-index:1000;left:0;top:0;width:100%;height:100%;
+           overflow:auto;background:rgba(0,0,0,.5)}
+    .modal-content{background:#fff;margin:10% auto;padding:20px;border-radius:10px;width:80%;
+                   max-width:600px;box-shadow:0 5px 15px rgba(0,0,0,.3);position:relative}
+    .modal-content textarea{width:100%;height:300px;font-family:monospace;font-size:13px;padding:10px}
+    .close-btn{position:absolute;top:10px;right:15px;color:#aaa;font-size:24px;font-weight:bold;cursor:pointer}
+    .close-btn:hover{color:#000}
+    #thumbnailPreview,#applyModalThumbnail{
+      display:block;max-width:300px;margin-top:10px;border:1px solid #ccc
+    }
+    #applyModal .modal-content button{width:100px}
+  </style>
+</head>
+
+<body>
+  <h1 style="margin:20px 0;font-size:24px;color:#333">X3D Bookmarking Example with Roanoke City Model</h1>
+
+  <!-- 3-D SCENE -->
+  <x3d id="x3dElement">
+    <scene>
+      <WorldInfo title="Roanoke City Model"
+                 info="Built 2025, (c) Virginia Tech"
+                 ageRestriction="18"
+                 license="CC-BY-4.0"></WorldInfo>
+
+      <!-- skybox -->
+      <Background backUrl="nz.png" bottomUrl="ny.png" frontUrl="pz.png"
+                  leftUrl="nx.png" rightUrl="px.png" topUrl="py.png"></Background>
+
+      <!-- default viewpoint -->
+      <Viewpoint DEF="AnimatedViewpoint"
+                 position="947.60547 358.48150 114.24887"
+                 orientation="-0.12102 0.99012 0.07078 1.38605"
+                 description="Animated Street View"></Viewpoint>
+
+      <!-- external model -->
+      <Inline url="./3d_file/test.x3d"></Inline>
+
+      <!-- ground -->
+      <Transform translation="0 270 0">
+        <Shape>
+          <Appearance><Material diffuseColor="0.5 0.5 0.5"></Material></Appearance>
+          <IndexedFaceSet coordIndex="0 1 2 3 -1" solid="false">
+            <Coordinate point="-5000 0 -5000  5000 0 -5000  5000 0 5000  -5000 0 5000"></Coordinate>
+          </IndexedFaceSet>
+        </Shape>
+      </Transform>
+
+      <!-- simple animation plumbing (unchanged) -->
+      <TimeSensor DEF="SceneTimer" loop="false"></TimeSensor>
+      <PositionInterpolator DEF="ScenePositionInterp"></PositionInterpolator>
+      <OrientationInterpolator DEF="SceneOrientationInterp"></OrientationInterpolator>
+      <ROUTE fromNode="SceneTimer"          fromField="fraction_changed" toNode="ScenePositionInterp"      toField="set_fraction"></ROUTE>
+      <ROUTE fromNode="SceneTimer"          fromField="fraction_changed" toNode="SceneOrientationInterp"   toField="set_fraction"></ROUTE>
+      <ROUTE fromNode="ScenePositionInterp" fromField="value_changed"    toNode="AnimatedViewpoint"        toField="set_position"></ROUTE>
+      <ROUTE fromNode="SceneOrientationInterp" fromField="value_changed" toNode="AnimatedViewpoint"        toField="set_orientation"></ROUTE>
+    </scene>
+  </x3d>
+
+  <!-- UI -->
+  <div class="controls">
+    <button onclick="generateBookmark()">Generate Bookmark</button>
+    <button onclick="applyBookmark()">Apply Bookmark</button><br>
+    <textarea id="bookmarkData" placeholder="Bookmark JSON here…"></textarea>
+
+    <!-- NEW: live error read-out -->
+    <div id="distanceContainer">Distance Error: —</div>
+  </div>
+
+  <!-- modals (unchanged markup) -->
+  <div id="bookmarkModal" class="modal">
+    <div class="modal-content">
+      <span class="close-btn" onclick="closeModal()">&times;</span>
+      <h2>Generated Bookmark</h2>
+      <textarea readonly id="bookmarkModalText"></textarea>
+      <p id="copyStatus" style="color:green;margin-top:10px;font-weight:bold"></p>
+      <img id="thumbnailPreview" alt="Thumbnail Preview">
+    </div>
+  </div>
+
+  <div id="applyModal" class="modal">
+    <div class="modal-content">
+      <span class="close-btn" onclick="closeApplyModal()">&times;</span>
+      <h2>Preview Bookmark</h2>
+      <img id="applyModalThumbnail" alt="Bookmark thumbnail preview">
+      <div style="margin-top:20px">
+        <button onclick="confirmApply()">Apply</button>
+        <button onclick="closeApplyModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /* ───────────────────────── helpers ───────────────────────── */
+
+    function getRuntime(){
+      return document.getElementById("x3dElement").runtime;
+    }
+
+    // NEW – compute Euclidean distance between current camera & expected bookmark position
+    function showDistance(expectedPos){
+      const runtime = getRuntime();
+      // camera position = inverse(viewMatrix) • e3 (eye-point)
+      const pos = runtime.viewMatrix().inverse().e3();      // SFVec3f
+      const dx  = pos.x - expectedPos[0];
+      const dy  = pos.y - expectedPos[1];
+      const dz  = pos.z - expectedPos[2];
+      const d   = Math.hypot(dx, dy, dz);                   // √(dx²+dy²+dz²)
+      document.getElementById("distanceContainer").textContent =
+        `Distance Error: ${d.toFixed(3)} m`;
+    }
+
+    /* ───────────────────────── modal utils ───────────────────────── */
+
+    function closeModal(){
+      document.getElementById("bookmarkModal").style.display="none";
+      document.getElementById("copyStatus").textContent="";
+    }
+    function closeApplyModal(){
+      document.getElementById("applyModal").style.display="none";
+      window._currentBookmark=null;
+    }
+
+    /* ───────────────────────── thumbnail helper ───────────────────────── */
+
+    function compressDataURI(dataURI,maxWidth=300,quality=.7){
+      return new Promise(res=>{
+        const img=new Image();
+        img.onload=()=>{
+          const scale=maxWidth/img.width;
+          const canvas=document.createElement("canvas");
+          canvas.width=maxWidth;
+          canvas.height=img.height*scale;
+          canvas.getContext("2d").drawImage(img,0,0,canvas.width,canvas.height);
+          res(canvas.toDataURL("image/jpeg",quality));
+        };
+        img.src=dataURI;
+      });
+    }
+
+    /* ───────────────────────── bookmark generation ───────────────────────── */
+
+    async function generateBookmark(){
+      const runtime=getRuntime();
+      const vpMatrix=runtime.viewMatrix().inverse();
+      const posQuat=vpMatrix.e3();                       // camera position
+      const quat=new x3dom.fields.Quaternion();          // orientation
+      quat.setValue(vpMatrix);
+      const [axis,angle]=quat.toAxisAngle();
+
+      const vp   = runtime.viewpoint();
+      const fov  = vp.getFieldOfView();
+      const zNear= vp.getNear();
+      const zFar = vp.getFar();
+
+      const navType = runtime.navigationType();
+      const navSpeed= runtime.speed();
+
+      const wi=document.querySelector("WorldInfo");
+      const sceneMeta={
+        title: wi?.getAttribute("title")??"",
+        info: wi?.getAttribute("info")??"",
+        ageRestriction: wi?.getAttribute("ageRestriction")??"none",
+        licenses: wi?.getAttribute("license")??""
+      };
+
+      const rawURI     = runtime.getScreenshot();
+      const thumbnailURI= await compressDataURI(rawURI,300,.7);
+
+      const bookmark={
+        camera:{
+          position:[posQuat.x,posQuat.y,posQuat.z],
+          orientation:[axis.x,axis.y,axis.z,angle],
+          fieldOfView:fov,zNear,zFar
+        },
+        navigation:{type:navType,speed:navSpeed},
+        metadata:{
+          annotation:"Generated viewpoint",
+          timestamp:new Date().toISOString(),
+          author:"User",
+          application:"X3DOM Bookmarking v1.2",
+          thumbnail:thumbnailURI,
+          licenses:sceneMeta.licenses,
+          ageRestriction:sceneMeta.ageRestriction,
+          scene:{title:sceneMeta.title,info:sceneMeta.info}
+        }
+      };
+
+      const str=JSON.stringify(bookmark,null,2);
+      document.getElementById("bookmarkData").value      =str;
+      document.getElementById("bookmarkModalText").value =str;
+      document.getElementById("thumbnailPreview").src    =thumbnailURI;
+      document.getElementById("bookmarkModal").style.display="block";
+
+      navigator.clipboard.writeText(str)
+        .then(()=>document.getElementById("copyStatus").textContent="✅ Bookmark copied!")
+        .catch(()=>document.getElementById("copyStatus").textContent="⚠️ Copy failed.");
+    }
+
+    /* ───────────────────────── bookmark application ───────────────────────── */
+
+    function applyBookmark(){
+      const json=document.getElementById("bookmarkData").value;
+      try{
+        const bookmark=JSON.parse(json);
+        window._currentBookmark=bookmark;
+        if(bookmark.metadata?.thumbnail){
+          document.getElementById("applyModalThumbnail").src=bookmark.metadata.thumbnail;
+        }
+        document.getElementById("applyModal").style.display="block";
+      }catch(e){
+        console.error(e);
+        alert("Invalid bookmark data!");
+      }
+    }
+
+    function confirmApply(){
+      const bookmark=window._currentBookmark;
+      if(!bookmark)return closeApplyModal();
+
+      const runtime=getRuntime();
+      const cam=bookmark.camera;
+
+      // create a temporary viewpoint so we can bind to it
+      const vp=document.createElement("Viewpoint");
+      vp.setAttribute("position",cam.position.join(" "));
+      vp.setAttribute("orientation",cam.orientation.join(" "));
+      vp.setAttribute("fieldOfView",cam.fieldOfView);
+      vp.setAttribute("zNear",cam.zNear);
+      vp.setAttribute("zFar",cam.zFar);
+      document.querySelector("scene").appendChild(vp);
+
+      // wait one frame, bind, then measure
+      runtime.exitFrame=()=>{
+        vp.setAttribute("bind","true");
+        runtime.exitFrame=()=>{};
+        // allow bind to finish (next micro-task) then compute error
+        setTimeout(()=>showDistance(cam.position),0);
+      };
+
+      if(bookmark.navigation){
+        runtime.navigationType(bookmark.navigation.type);
+        runtime.speed(bookmark.navigation.speed);
+      }
+
+      closeApplyModal();
+      alert("✅ Bookmark applied!");
+    }
+
+    /* ───────────────────────── global modal click-off ───────────────────────── */
+
+    window.onclick=e=>{
+      if(e.target===document.getElementById("bookmarkModal"))closeModal();
+      if(e.target===document.getElementById("applyModal"))closeApplyModal();
+    };
+  </script>
+</body>
+</html>
